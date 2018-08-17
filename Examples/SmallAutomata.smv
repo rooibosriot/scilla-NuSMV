@@ -1,24 +1,28 @@
+-- Current issues: model is unable to handle owner requesting the funds twice
+-- Quick fix: add a flag which flips upon first call to get_funds
+-- Or we can just use the boolean value in owner array spot to indicate
+
 MODULE crowdState
 	VAR
-		owner : 0..10;
-		max_block : 0..20;
+		owner : 0..3;
 		goal : 0..50;
+		max_block : 0..20;
 		funded : boolean; 		
 		backerb : array 0..3 of boolean; 
 		backeramt : array 0..3 of 0..5; 
 	ASSIGN
+		-- Frozen variables
 		init(owner) := 0;
 		next(owner) := 0;
-		init(goal) := 27; 
+		init(goal) := 27;
 		next(goal) := 27;
-		init(max_block) := 16;
-		next(max_block) := 16;
-
+		init(max_block) := 17;
+		next(max_block) := 17;
 		init(backerb[0]) := FALSE;
-		next(backerb[0]) := FALSE;
 		init(backeramt[0]) := 0;
 		next(backeramt[0]) := 0;
 
+		-- Non-frozen variables
 		init(funded) := FALSE;
 
 		init(backerb[1]) := FALSE;
@@ -100,7 +104,7 @@ MODULE main
 			 -- Donation is successful, (2)
 			 (inFlight.tag = donate_funds & !(inFlight.sender = 0) & !timeup & !(s.cs.backerb[inFlight.sender]) & (s.balance + inFlight.value <= 200)) : (s.balance + inFlight.value);
 			 -- Getfunds is successful, (4)
-			 (inFlight.tag = get_funds & inFlight.sender = 0 & timeup & goalmet) : 0;
+			 (inFlight.tag = get_funds & inFlight.sender = 0 & timeup & goalmet & !s.cs.backerb[0]) : 0;
 			 -- Refund is successful, (9)
 			 (inFlight.tag = claim_funds & !(inFlight.sender = 0) & timeup & !(goalmet | s.cs.funded) & (1 = inFlight.sender) & s.cs.backerb[1] & !(s.balance - s.cs.backeramt[1] < 0)) : s.balance - s.cs.backeramt[1];
 			 (inFlight.tag = claim_funds & !(inFlight.sender = 0) & timeup & !(goalmet | s.cs.funded) & (2 = inFlight.sender) & s.cs.backerb[2] & !(s.balance - s.cs.backeramt[2] < 0)) : s.balance - s.cs.backeramt[2];
@@ -120,7 +124,13 @@ MODULE main
 	 	esac;
 
 		-- Manipulating the backerb array
-		-- backerb[0] never changes because the owner cannot donate 
+		-- backerb[0] changes when owner requests funds
+		next(s.cs.backerb[0]) := 
+		case
+			 (inFlight.tag = get_funds & inFlight.sender = 0 & timeup & goalmet) : TRUE;
+			 TRUE : FALSE;
+		esac;
+
 		next(s.cs.backerb[1]) := 
 	 	case 
 			 (inFlight.tag = claim_funds & timeup & !(goalmet | s.cs.funded) & (1 = inFlight.sender) & s.cs.backerb[1]) : FALSE;
@@ -197,23 +207,66 @@ MODULE main
 			 TRUE : no_msg;
 		esac;
 
-	 	-- ---------------------------------- --
-	 	-- Picking values for the in message  -- 
-	 	-- ---------------------------------- --
-
 DEFINE
-		-- Forcible flattening of quantified predicates into propositional logic 
+		-- Flattening quantified predicates into propositional logic 
+		-- Expressing the fact that backer n has donated 
+		donates_1 := inFlight.sender = 1 & inFlight.tag = donate_funds;
+		donates_2 := inFlight.sender = 2 & inFlight.tag = donate_funds;
+		donates_3 := inFlight.sender = 3 & inFlight.tag = donate_funds;
+		-- Expressing the fact that backer n donation has been recorded
+		-- Balance and arrays will only update in the next FSM state 
+		-- Perhaps this will require us to toggle with lt/lte definition
 		donated_1 := s.cs.backerb[1] = TRUE & s.cs.backeramt[1] > 0;
 		donated_2 := s.cs.backerb[2] = TRUE & s.cs.backeramt[2] > 0;
 		donated_3 := s.cs.backerb[3] = TRUE & s.cs.backeramt[3] > 0;
 		timeup := b > s.cs.max_block;
 		goalmet := s.balance > s.cs.goal;
 		success := s.cs.funded = TRUE;
+		-- Expressing the fact that backer n wants to reclaim donation
+		claims_1 := inFlight.sender = 1 & inFlight.tag = claim_funds;
+		claims_2 := inFlight.sender = 2 & inFlight.tag = claim_funds;
+		claims_3 := inFlight.sender = 3 & inFlight.tag = claim_funds;
+		-- Expressing the fact that backer n will receive/has received donation back
+		-- This is not expressed in any FSM next state because we are contract-oriented
 		claimed_1 := outFlight.receiver = 1 & outFlight.value = money_back;
 		claimed_2 := outFlight.receiver = 2 & outFlight.value = money_back;
 		claimed_3 := outFlight.receiver = 3 & outFlight.value = money_back;
+		-- Expressing the fact that the owner wants to get funds
+		-- Funds will only be gotten/funded flag flipped in the next FSM state 
 		funds_available_next := inFlight.tag = get_funds & inFlight.sender = 0 & timeup & goalmet;
+		-- Expressing the fact that owner will get/has gotten funds
+		-- Again, not expressed in any FSM next state because contract-oriented
 		funds_already_gotten := outFlight.sender = 0 & outFlight.receiver = 0 & outFlight.value = money_back;
+INVAR	
+		-- Lemma 1 : The contract will always have sufficient funds to refund backers
+		-- This is an invariant, and not a temporal formula, because it should hold across all reachable states
+		s.balance >= (s.cs.backeramt[1] + s.cs.backeramt[2] + s.cs.backeramt[3]);
 SPEC	
-		-- Until funded has been flipped, the contract has enough funds to reimburse everyone
- 		A [s.balance >= (s.cs.backeramt[1] + s.cs.backeramt[2] + s.cs.backeramt[3]) U funds_already_gotten]; 
+ 		-- Lemma 2 : The contract will not drop backer donations
+ 		-- Donation recorded until claimed back
+ 		donates_1 -> !E [!claimed_1 U !(donated_1 | claimed_1)];
+SPEC
+ 		donates_2 -> !E [!claimed_2 U !(donated_2 | claimed_1)];
+SPEC
+ 		donates_3 -> !E [!claimed_3 U !(donated_3 | claimed_1)];
+SPEC
+ 		-- Lemma 3 : If the campaign has failed, every registered backer can claim_funds
+		(donated_1 & timeup & !goalmet & !success) -> !E [!claimed_1 U !(claimed_1 | donated_1)];
+SPEC
+		(donated_2 & timeup & !goalmet & !success) -> !E [!claimed_2 U !(claimed_1 | donated_2)];
+SPEC
+		(donated_3 & timeup & !goalmet & !success) -> !E [!claimed_3 U !(claimed_1 | donated_3)];
+
+SPEC
+		-- Lemma 4 : If the conditions obtain, the owner can get funds
+		(timeup & goalmet & success) -> !E [!funds_already_gotten U !((timeup & goalmet & success) | funds_already_gotten)]; 
+
+
+
+
+
+
+
+
+
+
