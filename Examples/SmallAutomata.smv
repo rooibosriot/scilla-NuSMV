@@ -6,7 +6,7 @@ MODULE crowdState
 	VAR
 		owner : 0..3;
 		goal : 0..50;
-		max_block : 0..20;
+		max_block : 0..50;
 		funded : boolean; 		
 		backerb : array 0..3 of boolean; 
 		backeramt : array 0..3 of 0..5; 
@@ -16,8 +16,8 @@ MODULE crowdState
 		next(owner) := 0;
 		init(goal) := 27;
 		next(goal) := 27;
-		init(max_block) := 17;
-		next(max_block) := 17;
+		init(max_block) := 42;
+		next(max_block) := 42;
 		init(backerb[0]) := FALSE;
 		init(backeramt[0]) := 0;
 		next(backeramt[0]) := 0;
@@ -75,7 +75,7 @@ MODULE symbolicmessage
 
 MODULE main
 	VAR 
-		b : 0..20;
+		b : 0..50;
 		inFlight : message;
 		outFlight : symbolicmessage;
 		s : cstate(crowdState);
@@ -89,7 +89,7 @@ MODULE main
 		-- The case matching order is very important
 		next(b) := 
 		case 
-			(b = 20) : 20; 
+			(b = 50) : 50; 
 			TRUE : b + 1;
 		esac;
 
@@ -253,20 +253,16 @@ SPEC
  		-- Lemma 3 : If the campaign has failed, every registered backer can claim_funds
 		(donated_1 & timeup & !goalmet & !success) -> !E [!claimed_1 U !(claimed_1 | donated_1)];
 SPEC
-		(donated_2 & timeup & !goalmet & !success) -> !E [!claimed_2 U !(claimed_1 | donated_2)];
+		(donated_2 & timeup & !goalmet & !success) -> !E [!claimed_2 U !(claimed_2 | donated_2)];
 SPEC
-		(donated_3 & timeup & !goalmet & !success) -> !E [!claimed_3 U !(claimed_1 | donated_3)];
+		(donated_3 & timeup & !goalmet & !success) -> !E [!claimed_3 U !(claimed_3 | donated_3)];
 
 SPEC
 		-- Lemma 4 : If the conditions obtain, the owner can get funds
 		(timeup & goalmet & success) -> !E [!funds_already_gotten U !((timeup & goalmet & success) | funds_already_gotten)]; 
-
-
-
-
-
-
-
-
-
-
+SPEC
+		-- This spec should fail
+		(timeup & goalmet & success) -> E [!funds_already_gotten U !((timeup & goalmet & success) | funds_already_gotten)]; 
+SPEC
+		-- This spec should also fail
+		A [(timeup & goalmet & success) U funds_already_gotten];
